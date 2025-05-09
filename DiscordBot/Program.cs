@@ -1,12 +1,11 @@
 ﻿using DiscordBot.Business.Bots;
 using DiscordBot.Business.Helpers;
 using DiscordBot.Database;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 using System.Reflection;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 try
 {
@@ -19,16 +18,15 @@ try
 
     AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Error(e.ExceptionObject as Exception, "Unhandled Exception.");
 
-    var configuration = new ConfigurationBuilder()
+    var builder = WebApplication.CreateBuilder(args);
+    builder.Host.UseSerilog(Log.Logger);
+    builder.Logging.ClearProviders();
+    builder.Logging.AddSerilog(Log.Logger);
+
+    var configuration = builder.Configuration
         .AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true)
         .AddEnvironmentVariables()
         .Build();
-
-    await using var serviceProvider = new ServiceCollection()
-        .AddLogging(a => a.SetMinimumLevel(LogLevel.Trace))
-        .AddSingleton<IConfiguration>(configuration)
-        .AddScoped<InaNisBot>()
-        .BuildServiceProvider();
 
     if (configuration.GetLogValue("DiscordBot:Token") is not { } botTokenValue)
     {
@@ -47,23 +45,30 @@ try
     else
         DanbooruHelper.ApiKey = danbooruToken;
 
-    var testingBot = serviceProvider.GetRequiredService<InaNisBot>();
-    await testingBot.StartAsync(serviceProvider, botTokenValue);
+    builder.Services
+    .AddLogging(a => a.SetMinimumLevel(LogLevel.Trace))
+    .AddOpenApi()
+    .AddEndpointsApiExplorer()
+    .AddSwaggerGen()
+    .AddHttpContextAccessor()
+    .AddDbContext<DatabaseContext>()
+    .AddSingleton<IConfiguration>(configuration)
+    .AddSingleton(p => new DiscordNet(p, botTokenValue))
+    .AddControllersWithViews();
 
-    AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-    {
-        Log.Verbose($"Shutdown received! Debug channel available: {testingBot.DebugChannel != null}");
-        // awaiting the task HERE would signal the runtime, that there is nothing to do on this thread, thus allowing continuation of the AppDomain shutdown.
-        testingBot.DebugChannel?.SendMessageAsync("Sorry folks, I'm heading out^^").GetAwaiter().GetResult();
-        testingBot.StopAsync().GetAwaiter().GetResult();
-        Log.Verbose("Done shutting down.");
-    };
+    var app = builder.Build();
+    app.UseSerilogRequestLogging();
+    app.UseRouting();
+    app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 
-    Log.Verbose("ready and waiting...");
-    await Task.Delay(Timeout.Infinite);
+    app.MapGet("/", ([FromServices] DatabaseContext context) => context.AudioClips.AsNoTracking().ToList());
 
-    Log.Warning("Shutting down by passing infinity. Yes really!");
-    await testingBot.StopAsync();
+    Log.Information("bot ready for use.");
+    await app.RunAsync();
+
+    Log.Information("Shutting down by passing infinity. Yes really!");
     return 0;
 }
 catch (Exception ex)
