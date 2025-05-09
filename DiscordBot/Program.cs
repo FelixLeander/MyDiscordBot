@@ -1,9 +1,9 @@
 ﻿using DiscordBot.Business.Bots;
 using DiscordBot.Business.Helpers;
-using DiscordBot.Database;
 using Serilog;
 using Serilog.Events;
 using System.Reflection;
+using DiscordBot.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
